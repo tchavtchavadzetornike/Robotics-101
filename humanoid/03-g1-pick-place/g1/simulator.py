@@ -151,6 +151,10 @@ class Simulator:
         """
         return self.data.qpos[0:3].copy(), self.data.qpos[3:7].copy()
 
+    def world_state(self):
+        """Every position in the scene (MuJoCo qpos): robot pose, joints, free objects."""
+        return self.data.qpos.copy()
+
     def bottle_pose(self):
         """Bottle position and orientation. On the real robot: camera + detector."""
         return self.data.qpos[

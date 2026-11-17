@@ -6,6 +6,7 @@ Inputs:  base_pose    where the robot is (50 Hz), from sim (real robot: localiza
          arm_status   from arm
 Outputs: cmd_vel      walking velocity, to locomotion
          arm_command  one arm step at a time, to arm
+         step         the step that just started, as text (for the dashboard)
 
 The steps themselves are in g1/mission.py. Every time a new base_pose arrives,
 this node gives the mission what the robot sees and sends out what it decides.
@@ -63,6 +64,7 @@ for event in node:
             label = mission.label
             step = f"{mission.index + 1}/{len(mission.steps)}"
             node.log_info(f"t={time:5.1f}s  step {step}: {label}")
+            node.send_output("step", pa.array([f"step {step}: {label}"]))
         if mission.finished and not reported:
             miss = 100 * np.hypot(
                 bottle[0] - PLACE_POINT[0], bottle[1] - PLACE_POINT[1]

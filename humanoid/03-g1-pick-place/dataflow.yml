@@ -1,13 +1,17 @@
 # Lesson 3: the full Unitree G1 picks up a bottle and puts it on another table.
 #
-#             base_pose, bottle_pose (50 Hz)
+#                       base_pose (50 Hz)
 #        ┌───────────────────────────────────────────┐
 #        │                                            ▼
-#      sim ──low_state (500 Hz)──▶ locomotion ◀──cmd_vel──── task
-#       ▲  ╲                         │   └──standing──────────▶ ▲
-#       │   ╲──low_state──▶ arm ◀────┼──arm_command────────────┤
-#       │                   │  └─────┼──arm_status─────────────┘
-#       └──joint commands───┴────────┘
+#      sim ──low_state (500 Hz)──▶ locomotion ◀──cmd_vel──── task ◀── bottle_pose ── perception
+#       ▲ ╲╲                         │   └──standing──────────▶ ▲                          ▲
+#       │  ╲╲──low_state──▶ arm ◀────┼──arm_command────────────┤             rgb, depth, cam_pose
+#       │   ╲               │  └─────┼──arm_status─────────────┘                          │
+#       └────╲joint commands┴────────┘                                                 camera
+#             ╲──world_state (15 Hz)──────────────────────────────────────────────────────┘
+#
+# The bottle position comes from the head camera. sim's own bottle_pose is the
+# truth, used only by the dashboard to show the camera's error.
 #
 # Run from the repository root:  ./run.sh g1-pick-place
 
@@ -29,13 +33,15 @@ nodes:
     outputs:
       - low_state # joint angles and speeds, IMU
       - base_pose # where the robot is (on hardware: localization)
-      - bottle_pose # where the bottle is (on hardware: camera + detector)
+      - bottle_pose # the TRUE bottle position: only the dashboard uses it, to show the camera's error
+      - world_state # every position in the scene, for the camera (simulation only)
     output_types:
       low_state: std/core/v1/Float64
       base_pose: std/core/v1/Float64
       bottle_pose: std/core/v1/Float64
+      world_state: std/core/v1/Float64
     env:
-      SCENE: robot/scene.xml
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED
 
   - id: locomotion
     description: walks with Unitree's trained policy, or stands still and balances
@@ -69,18 +75,77 @@ nodes:
     env:
       ROBOT: robot/g1_with_hands.xml
 
+  - id: perception
+    description: finds the bottle in the head camera's images, says where it is in the room
+    path: uv
+    args: run --no-sync python -u nodes/perception.py
+    inputs:
+      rgb:
+        source: camera/rgb
+        queue_size: 1
+      depth:
+        source: camera/depth
+        queue_size: 1
+      cam_pose:
+        source: camera/cam_pose
+        queue_size: 1
+    outputs:
+      - bottle_pose
+    output_types:
+      bottle_pose: std/core/v1/Float64
+
+  - id: detector
+    description: finds the objects on the tables (OWLv2) while the robot stands still, 1.5 times a second
+    path: uv
+    args: run --no-sync python -u nodes/detector.py
+    inputs:
+      tick: dora/timer/millis/667 # look at most 1.5 times a second: OWLv2 is heavy
+      standing:
+        source: locomotion/standing
+        queue_size: 30 # 0.6 s of 50 Hz: what arrives while the detector works on one image
+      rgb:
+        source: camera/rgb
+        queue_size: 2 # only the newest images matter, older ones are dropped
+      depth:
+        source: camera/depth
+        queue_size: 2
+      cam_pose:
+        source: camera/cam_pose
+        queue_size: 2
+    outputs:
+      - seen
+    env:
+      HF_HUB_OFFLINE: 1 # the weights are in ~/.cache/huggingface already
+      TORCH_NUM_THREADS: 4
+
+  - id: world
+    description: the memory of every object seen, with ids that don't change
+    path: uv
+    args: run --no-sync python -u nodes/world.py
+    inputs:
+      seen: detector/seen
+      depth:
+        source: camera/depth
+        queue_size: 50 # 3 s of images: the detector's result arrives ~0.4 s after its image
+      cam_pose:
+        source: camera/cam_pose
+        queue_size: 50
+    outputs:
+      - objects
+
   - id: task
     description: the mission, step by step (g1/mission.py)
     path: uv
     args: run --no-sync python -u nodes/task.py
     inputs:
       base_pose: sim/base_pose
-      bottle_pose: sim/bottle_pose
+      bottle_pose: perception/bottle_pose # seen by the camera, not read from the simulator
       standing: locomotion/standing
       arm_status: arm/arm_status
     outputs:
       - cmd_vel
       - arm_command
+      - step # the step that just started, as text
     output_types:
       cmd_vel: std/core/v1/Float64
       arm_command: std/core/v1/Float64
@@ -89,3 +154,52 @@ nodes:
       PLACE_POINT: "1.0,-1.52" # the green mark on table B (x, y)
       PLACE_HEADING_DEG: -90 # face -y at table B
       TABLE_HEIGHT: 0.80
+
+  - id: camera
+    description: the head camera, color and depth, drawn from the simulation's state
+    path: uv
+    args: run --no-sync python -u nodes/camera.py
+    inputs:
+      world_state:
+        source: sim/world_state
+        queue_size: 1 # only the newest state matters: skip any the camera had no time for
+    outputs:
+      - rgb
+      - depth
+      - cam_pose
+    output_types:
+      rgb: std/core/v1/UInt8
+      depth: std/core/v1/Float32
+      cam_pose: std/core/v1/Float64
+    env:
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED
+      CAMERA: head_cam # in robot/g1_with_hands.xml
+      WIDTH: 640
+      HEIGHT: 480
+
+  - id: dashboard
+    description: live 3D map, charts and mission log in Rerun; only listens
+    path: uv
+    args: run --no-sync python -u nodes/dashboard.py
+    inputs:
+      tick: dora/timer/millis/50 # redraw the robot 20 times a second
+      base_pose: sim/base_pose
+      bottle_pose: sim/bottle_pose # the truth
+      seen_bottle: perception/bottle_pose
+      objects: world/objects
+      cmd_vel: task/cmd_vel
+      standing: locomotion/standing
+      arm_command: task/arm_command
+      arm_status: arm/arm_status
+      step: task/step
+      rgb:
+        source: camera/rgb
+        queue_size: 1
+      depth:
+        source: camera/depth
+        queue_size: 1
+      cam_pose: camera/cam_pose
+    restart_policy: on-failure # not critical: restart it if it crashes
+    max_restarts: 3
+    env:
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED

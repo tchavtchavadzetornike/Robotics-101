@@ -23,12 +23,17 @@ import numpy as np
 GAIN = 0.8  # 1/s: 10 cm away -> 0.08 m/s
 TURN_GAIN = 1.0  # 1/s: 0.1 rad off -> 0.1 rad/s
 MAX_FORWARD = 0.4  # m/s (the policy was trained up to 1 m/s; slower is steadier)
+MAX_BACKWARD = 0.15  # m/s: backing away from a table slowly rocks less, like a person does
 MAX_SIDEWAYS = 0.25  # m/s
 MAX_TURN = 0.6  # rad/s
 # The walking policy ignores very small commands (it keeps stepping in place),
 # so close to the goal we still ask for at least this much:
 MIN_SPEED = 0.08  # m/s
 MIN_TURN = 0.15  # rad/s
+# Sideways the dead zone is wider: a 7 cm/s sideways correction made the robot step in place while
+# it drifted 10-15 cm (tell-the-robot phase 4). Above a small sideways error, ask for at least this:
+MIN_SIDEWAYS = 0.10  # m/s
+SIDEWAYS_ERROR = 0.03  # m
 MAX_ACCEL = 0.5  # m/s^2: from 0 to 0.4 m/s in 0.8 s
 MAX_TURN_ACCEL = 1.0  # rad/s^2
 POSITION_TOLERANCE = 0.04  # m: arrived
@@ -84,8 +89,11 @@ class Navigator:
         vx, vy = GAIN * ahead, GAIN * left
         if distance > POSITION_TOLERANCE and GAIN * distance < MIN_SPEED:
             vx, vy = MIN_SPEED * ahead / distance, MIN_SPEED * left / distance
-        too_fast = max(abs(vx) / MAX_FORWARD, abs(vy) / MAX_SIDEWAYS, 1.0)
+        max_ahead = MAX_FORWARD if vx >= 0 else MAX_BACKWARD
+        too_fast = max(abs(vx) / max_ahead, abs(vy) / MAX_SIDEWAYS, 1.0)
         vx, vy = vx / too_fast, vy / too_fast  # same direction, slower
+        if abs(left) > SIDEWAYS_ERROR and abs(vy) < MIN_SIDEWAYS:
+            vy = MIN_SIDEWAYS if left > 0 else -MIN_SIDEWAYS
         vturn = np.clip(TURN_GAIN * turn, -MAX_TURN, MAX_TURN)
         if abs(turn) > HEADING_TOLERANCE and abs(vturn) < MIN_TURN:
             vturn = MIN_TURN if turn > 0 else -MIN_TURN

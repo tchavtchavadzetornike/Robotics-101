@@ -9,6 +9,7 @@ Joint lists are always in robot.JOINTS order.
   pose          sim -> task                  robot pelvis / bottle pose   (50 Hz)
   cmd_vel       task -> locomotion           walk: forward, left, turn
   standing      locomotion -> task           1 = standing still and steady
+  world_state   sim -> camera                every position in the scene (MuJoCo qpos)  (15 Hz)
   arm_command   task -> arm                  one step for the arm (see kinds below)
   arm_status    arm -> task                  which arm command is finished, ok or not
 """
@@ -55,6 +56,19 @@ def pack_pose(time, position, quat):
 
 def unpack_pose(msg):
     return msg[0], msg[1:4], msg[4:8]
+
+
+# ---- world_state: [time, qpos x model.nq] ----
+# Everything that moves: the robot (pelvis + 43 joints) and every free object.
+# A camera node copies it into its own MuJoCo world to draw what the robot sees.
+
+
+def pack_world_state(time, qpos):
+    return np.concatenate([[time], qpos])
+
+
+def unpack_world_state(msg):
+    return msg[0], msg[1:]
 
 
 # ---- cmd_vel: [forward m/s, left m/s, turn rad/s] (robot frame) ----

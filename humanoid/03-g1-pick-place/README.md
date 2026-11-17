@@ -6,6 +6,12 @@ A full humanoid robot, in a computer simulation, does one complete small job: it
 
 **Video of one run, 2× speed:** [media/mission.mp4](media/mission.mp4)
 
+> **Tell the robot what to do.** This lesson also runs with a head camera, an object detector, a
+> memory, reusable skills and Claude as the brain: you type a sentence, the robot does it. See
+> [../tell-the-robot/README.md](../tell-the-robot/README.md). With that work the mission has 17
+> steps (the arm goes down after stepping back), `task` gets `bottle_pose` from the camera, and
+> `dataflow.yml` has 9 nodes. The sections below describe the original 16-step, 4-node version.
+
 This README explains everything: what every part does, every number in the code and where it comes from, and every chart. It is written for beginners, so you need no robotics or Python knowledge. Hard words are explained in the [glossary](#23-glossary) at the end.
 
 The charts are drawn by `tools/make_charts.py` from the project's own code and from one real simulation run, so they always match the code.

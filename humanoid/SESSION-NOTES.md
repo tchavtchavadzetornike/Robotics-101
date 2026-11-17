@@ -44,7 +44,7 @@ The full Unitree G1 (43 motors, Dex3 hands) walks to table A, picks up a bottle,
 | navigation | speed = 0.8 x distance, smoothed, with a minimum speed |
 | arm | inverse kinematics, joint and line moves with a speed profile, gravity compensation |
 | grasp | open hand from the side, fingers curl past the bottle and keep squeezing |
-| mission | 16 steps; each computes its target when it starts |
+| mission | 17 steps; each computes its target when it starts |
 | dora | 4 nodes: `sim`, `locomotion`, `arm`, `task`; the logic is in the `g1/` library |
 
 Tested: the mission passes with the bottle moved up to 15 cm and from different start spots (0.5-1.0 cm from the mark). Through dora: real time, done in 43 s, 1.0 cm from the mark.

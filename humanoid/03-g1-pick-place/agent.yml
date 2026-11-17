@@ -1,0 +1,211 @@
+# Tell the robot, phase 5: the G1 with Claude as the brain (skills.yml has the scripted commander).
+# dataflow.yml keeps the original 17-step mission; this graph replaces its task node with
+# skills (look_around, go_to, pick, place) driven by commands, and the color perception
+# with the detector + memory from phase 3.
+#
+#   chat --text--> agent --command--> skills --cmd_vel--> locomotion --+
+#        ^                   |  \--arm_command--> arm -------+--> sim --world_state--> camera
+#        +-----result--------+   <--objects-- world <--seen-- detector <--rgb, depth--/
+#
+# Run: ./run.sh g1-agent, then in a second terminal: uv run --no-sync python nodes/chat.py
+# Needs ANTHROPIC_API_KEY. SEED=<n> for a random room.
+
+strict_types: true # a type mismatch between two nodes is an error
+
+env: # given to every node
+  PYTHONPATH: . # so every node can `import g1` (the robot software library)
+
+nodes:
+  - id: sim
+    name: robot + room
+    description: MuJoCo physics at 500 Hz, the G1's motor drivers and sensors, 3D window. On hardware this is the G1 itself.
+    path: uv
+    args: run --no-sync mjpython -u nodes/sim.py
+    inputs:
+      tick: dora/timer/millis/2 # one physics step every 2 ms
+      lower_body_cmd: locomotion/joint_command
+      upper_body_cmd: arm/joint_command
+    outputs:
+      - low_state # joint angles and speeds, IMU
+      - base_pose # where the robot is (on hardware: localization)
+      - bottle_pose # the TRUE bottle position: only the dashboard uses it, to show the camera's error
+      - world_state # every position in the scene, for the camera (simulation only)
+    output_types:
+      low_state: std/core/v1/Float64
+      base_pose: std/core/v1/Float64
+      bottle_pose: std/core/v1/Float64
+      world_state: std/core/v1/Float64
+    env:
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED
+
+  - id: locomotion
+    description: walks with Unitree's trained policy, or stands still and balances
+    path: uv
+    args: run --no-sync python -u nodes/locomotion.py
+    inputs:
+      low_state: sim/low_state
+      cmd_vel: skills/cmd_vel
+    outputs:
+      - joint_command # legs + waist
+      - standing
+    output_types:
+      joint_command: std/core/v1/Float64
+      standing: std/core/v1/Float64
+    env:
+      POLICY: policies/g1_walk.onnx
+
+  - id: arm
+    description: moves the right hand (IK, smooth paths, gravity compensation) and opens/closes it
+    path: uv
+    args: run --no-sync python -u nodes/arm.py
+    inputs:
+      low_state: sim/low_state
+      arm_command: skills/arm_command
+    outputs:
+      - joint_command # arms + hands
+      - arm_status
+    output_types:
+      joint_command: std/core/v1/Float64
+      arm_status: std/core/v1/Float64
+    env:
+      ROBOT: robot/g1_with_hands.xml
+
+  - id: detector
+    description: finds the objects on the tables (OWLv2) while the robot stands still, 1.5 times a second
+    path: uv
+    args: run --no-sync python -u nodes/detector.py
+    inputs:
+      tick: dora/timer/millis/667 # look at most 1.5 times a second: OWLv2 is heavy
+      standing:
+        source: locomotion/standing
+        queue_size: 30 # 0.6 s of 50 Hz: what arrives while the detector works on one image
+      rgb:
+        source: camera/rgb
+        queue_size: 2 # only the newest images matter, older ones are dropped
+      depth:
+        source: camera/depth
+        queue_size: 2
+      cam_pose:
+        source: camera/cam_pose
+        queue_size: 2
+    outputs:
+      - seen
+    env:
+      HF_HUB_OFFLINE: 1 # the weights are in ~/.cache/huggingface already
+      TORCH_NUM_THREADS: 4
+
+  - id: world
+    description: the memory of every object seen, with ids that don't change
+    path: uv
+    args: run --no-sync python -u nodes/world.py
+    inputs:
+      seen: detector/seen
+      held: skills/held
+      arm_area: skills/arm_area
+      depth:
+        source: camera/depth
+        queue_size: 50 # 3 s of images: the detector's result arrives ~0.4 s after its image
+      cam_pose:
+        source: camera/cam_pose
+        queue_size: 50
+    outputs:
+      - objects
+
+  - id: camera
+    description: the head camera, color and depth, drawn from the simulation's state
+    path: uv
+    args: run --no-sync python -u nodes/camera.py
+    inputs:
+      world_state:
+        source: sim/world_state
+        queue_size: 1 # only the newest state matters: skip any the camera had no time for
+    outputs:
+      - rgb
+      - depth
+      - cam_pose
+    output_types:
+      rgb: std/core/v1/UInt8
+      depth: std/core/v1/Float32
+      cam_pose: std/core/v1/Float64
+    env:
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED
+      CAMERA: head_cam # in robot/g1_with_hands.xml
+      WIDTH: 640
+      HEIGHT: 480
+
+  - id: dashboard
+    description: live 3D map, charts and mission log in Rerun; only listens
+    path: uv
+    args: run --no-sync python -u nodes/dashboard.py
+    inputs:
+      tick: dora/timer/millis/50 # redraw the robot 20 times a second
+      base_pose: sim/base_pose
+      bottle_pose: sim/bottle_pose # the truth
+      objects: world/objects
+      cmd_vel: skills/cmd_vel
+      standing: locomotion/standing
+      arm_command: skills/arm_command
+      arm_status: arm/arm_status
+      step: skills/status
+      conversation: agent/log
+      rgb:
+        source: camera/rgb
+        queue_size: 1
+      depth:
+        source: camera/depth
+        queue_size: 1
+      cam_pose: camera/cam_pose
+    restart_policy: on-failure # not critical: restart it if it crashes
+    max_restarts: 3
+    env:
+      SCENE: robot/scene_live.xml # written by run.sh: scene.xml, or random room SEED
+
+  - id: skills
+    description: runs one skill at a time (g1/skills.py), reports a result
+    path: uv
+    args: run --no-sync python -u nodes/skills.py
+    inputs:
+      base_pose: sim/base_pose
+      low_state:
+        source: sim/low_state
+        queue_size: 1 # only the newest finger angles matter
+      standing: locomotion/standing
+      arm_status: arm/arm_status
+      objects: world/objects
+      command: agent/command
+    outputs:
+      - cmd_vel
+      - arm_command
+      - held
+      - arm_area
+      - status
+      - result
+    output_types:
+      cmd_vel: std/core/v1/Float64
+      arm_command: std/core/v1/Float64
+      held: std/core/v1/Float64
+
+  - id: agent
+    description: Claude turns a sentence into skill calls and reads each result (g1/agent.py)
+    path: uv
+    args: run --no-sync python -u nodes/agent.py
+    inputs:
+      tick: dora/timer/millis/100
+      text: chat/text
+      result: skills/result
+      objects: world/objects
+      held: skills/held
+    outputs:
+      - command
+      - reply
+      - log
+    env:
+      AGENT_SCRIPT: "" # sentences separated by |, sent one by one when idle; or type them in nodes/chat.py
+
+  - id: chat
+    description: type to the robot from a second terminal (uv run --no-sync python nodes/chat.py)
+    path: dynamic
+    inputs:
+      reply: agent/reply
+    outputs:
+      - text

@@ -12,7 +12,7 @@ frame (x ahead, y left, z up). Hand targets go to the arm in the body frame.
 
 import numpy as np
 
-from g1 import messages, navigation
+from g1 import frames, messages, navigation
 from g1.simulator import yaw_of
 
 # Where the bottle should be, seen from the robot, when it stands to grasp it:
@@ -74,8 +74,9 @@ class Mission:
             Step("open the hand", messages.OPEN),
             Step("pull the hand away", messages.MOVE_LINE, self.hand_away),
             Step("raise the hand", messages.MOVE_LINE, self.ready),
-            Step("arm down", messages.REST),
+            Step("hand in the carry pose", messages.MOVE_JOINTS, self.carry),
             Step("step back", WALK, self.backed_off),
+            Step("arm down", messages.REST),
         ]
         self.index = -1  # no step started yet
         self.step_start = 0.0
@@ -97,10 +98,8 @@ class Mission:
     # ---- frames ----
 
     def to_body(self, point):
-        """World point -> body frame: subtract the robot position, turn by -heading."""
-        d = np.asarray(point) - self.position
-        c, s = np.cos(self.heading), np.sin(self.heading)
-        return np.array([c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]])
+        """World point -> body frame (see g1/frames.py)."""
+        return frames.to_body(point, self.position, self.heading)
 
     @staticmethod
     def stand_pose_for(point, heading):
