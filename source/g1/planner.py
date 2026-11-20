@@ -16,14 +16,16 @@ the walking controller takes: forward, sideways and turn speed.
 
 import numpy as np
 
+from .config import PERSON_RADIUS
+
 # ---- what the robot can do ----
 # Speed changes are smoothed with separate limits for speeding up and for
 # braking, like ROS 2 Nav2's velocity smoother.
 MAX_ACCEL = 0.5  # m/s^2: 0 to 1 m/s in 2 s
 # Braking. The safety layer (safety.py) relies on this value, so it must be
 # what the robot really achieves: ISO 10218-1 asks for the stopping distance
-# to be measured (scripts/measure_stopping.py). Until then it is the same
-# ramp the robot is already commanded with, which it follows.
+# to be measured (scripts/measure_walking.py). Measured: at least 0.95 m/s^2
+# (README, section 2), so 0.5 is on the safe side.
 MAX_DECEL = 0.5  # m/s^2
 MAX_TURN_ACCEL = 1.0  # rad/s^2
 # As fast as the walking policy allows: NVIDIA's AGILE G1 walking policy is
@@ -39,15 +41,14 @@ SPEEDS = (1.5, 1.0, 0.5)  # m/s: the speeds it tries, plus standing still
 DIRECTIONS = np.radians(np.arange(-90, 91, 15))
 MAX_SIDEWAYS = 0.25  # m/s
 MAX_TURN = 1.0  # rad/s
-TURN_GAIN = 2.0  # 1/s: 0.5 rad off the wanted direction -> turn at 1 rad/s
+CRUISE_TURN_GAIN = 2.0  # 1/s: 0.5 rad off the wanted direction -> turn at 1 rad/s
 
 # ---- looking ahead ----
 HORIZON = 4.0  # s: how far ahead it looks
 LOOK_DT = 0.2  # s: it checks every 0.2 s of that future
 PLAN_DT = 0.1  # s between two plans (it plans on every lidar scan, 10 Hz)
 # Sizes seen from above. Together: centers closer than 0.52 m = a bump.
-ROBOT_RADIUS = 0.30  # m: the G1 with its arms
-PERSON_RADIUS = 0.22  # m
+ROBOT_RADIUS = 0.30  # m: the G1 with its arms (PERSON_RADIUS is in config.py)
 COMFORT = 0.8  # m of free space the robot likes to keep to a person
 # People change their minds, and the tracker's idea of their velocity is a bit
 # off. So for every second it looks ahead, the planner treats each person as
@@ -178,7 +179,7 @@ class Planner:
                 [
                     max(speed * np.cos(off), 0.0),  # never walk backwards blind
                     np.clip(speed * np.sin(off), -MAX_SIDEWAYS, MAX_SIDEWAYS),
-                    np.clip(TURN_GAIN * off, -MAX_TURN, MAX_TURN),
+                    np.clip(CRUISE_TURN_GAIN * off, -MAX_TURN, MAX_TURN),
                 ]
             )
         self.cmd[0] = smooth_speed(wanted[0], self.cmd[0], dt)

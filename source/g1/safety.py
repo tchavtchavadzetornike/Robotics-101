@@ -25,7 +25,8 @@ import math
 
 import numpy as np
 
-from .planner import MAX_DECEL, PERSON_RADIUS, PLAN_DT, ROBOT_RADIUS
+from .config import PERSON_RADIUS
+from .planner import MAX_DECEL, PLAN_DT, ROBOT_RADIUS
 
 # The robot reacts to what it saw up to one lidar turn ago (10 Hz lidar) and
 # plans every PLAN_DT: the worst case from seeing to acting is both.
@@ -34,6 +35,14 @@ REACTION_TIME = 0.1 + PLAN_DT  # s
 # lesson's tests) and lidar points to about 1 cm; keep 2 standard deviations.
 UNCERTAINTY = 0.06  # m
 STOP_DISTANCE = 0.05  # m of free space: closer than this, nothing moves toward it
+# What the robot knows about its surroundings must be recent: three lidar scans.
+MAX_AGE = 0.3  # s of robot time
+
+
+def sensors_fresh(now, *sensor_times):
+    """Every sensor has reported, and none of them longer than MAX_AGE ago
+    (`now` and the times are robot time, in seconds)."""
+    return all(t is not None and now - t <= MAX_AGE for t in sensor_times)
 
 
 def allowed_speed(gap, human_speed, decel=MAX_DECEL, reaction=REACTION_TIME):
@@ -41,10 +50,9 @@ def allowed_speed(gap, human_speed, decel=MAX_DECEL, reaction=REACTION_TIME):
     that comes toward the robot at `human_speed`, from
     gap = v_h (T_r + v/a) + v T_r + v^2 / (2a), solved for v."""
     room = gap - human_speed * reaction
-    if room <= 0.0:
-        return 0.0
     b = reaction + human_speed / decel
-    return decel * (-b + math.sqrt(b * b + 2.0 * room / decel))
+    speed = np.where(room <= 0.0, 0.0, decel * (-b + np.sqrt(b * b + 2.0 * np.maximum(room, 0.0) / decel)))
+    return float(speed) if speed.ndim == 0 else speed
 
 
 class SpeedSeparationMonitor:
@@ -69,25 +77,29 @@ class SpeedSeparationMonitor:
         if speed < 1e-6:
             return (0.0, 0.0, turn)
 
-        obstacles = [(row[:2], row[2:4], PERSON_RADIUS) for row in np.asarray(tracks).reshape(-1, 4)]
+        tracks = np.asarray(tracks, dtype=float).reshape(-1, 4)
+        positions, velocities = tracks[:, :2], tracks[:, 2:4]
+        radii = np.full(len(tracks), PERSON_RADIUS)
         if points is not None:
-            obstacles += [(p, np.zeros(2), 0.0) for p in np.asarray(points).reshape(-1, 2)]
+            points = np.asarray(points, dtype=float).reshape(-1, 2)
+            positions = np.vstack([positions, points])
+            velocities = np.vstack([velocities, np.zeros_like(points)])
+            radii = np.concatenate([radii, np.zeros(len(points))])
+        if len(positions) == 0:
+            return (forward, left, turn)
 
-        scale = 1.0
-        for position, person_velocity, radius in obstacles:
-            offset = np.asarray(position) - (x, y)
-            distance = float(np.hypot(*offset))
-            if distance < 1e-6:
-                return (0.0, 0.0, turn)
-            toward = offset / distance  # unit vector from robot to obstacle
-            robot_closing = float(velocity @ toward)
-            if robot_closing <= 0.0:
-                continue  # walking away from it: always fine
-            human_closing = max(0.0, -float(np.asarray(person_velocity) @ toward))
-            gap = distance - ROBOT_RADIUS - radius - UNCERTAINTY
-            allowed = 0.0 if gap < STOP_DISTANCE else allowed_speed(gap, human_closing, self.decel)
-            if robot_closing > allowed:
-                scale = min(scale, allowed / robot_closing)
-        if scale < 1.0:
-            self.limited = True
+        offset = positions - (x, y)
+        distance = np.hypot(offset[:, 0], offset[:, 1])
+        if np.any(distance < 1e-6):
+            return (0.0, 0.0, turn)
+        toward = offset / distance[:, None]  # unit vectors from the robot to each obstacle
+        robot_closing = toward @ velocity  # walking away from one (negative): always fine
+        human_closing = np.maximum(0.0, -np.einsum("ij,ij->i", velocities, toward))
+        gap = distance - ROBOT_RADIUS - radii - UNCERTAINTY
+        allowed = np.where(gap < STOP_DISTANCE, 0.0, allowed_speed(gap, human_closing, self.decel))
+        too_fast = robot_closing > allowed
+        if not np.any(too_fast):
+            return (forward, left, turn)
+        self.limited = True
+        scale = float(np.min(allowed[too_fast] / robot_closing[too_fast]))
         return (forward * scale, left * scale, turn)

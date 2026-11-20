@@ -11,13 +11,16 @@ The same adapter would work with a real G1 that publishes these messages.
         mission.update(); robot.step()
 """
 
+import time
+
 import numpy as np
 import pyarrow as pa
 
 from . import joints, messages
+from .config import CONTROL_DT
 from .interfaces import G1
 
-DT = 0.02  # s: the sim node's control period (g1.isaac: 200 Hz physics / 4)
+START_TIMEOUT = 30.0  # s of real time to wait for the sim's first state before giving up
 
 
 class DoraG1(G1):
@@ -31,13 +34,16 @@ class DoraG1(G1):
         self._pose = (0.0, 0.0, 0.0)
         self._state = None
         self._scan = None
-        self.stopped = False
+        self._index = {name: i for i, name in enumerate([*joints.UPPER_BODY, *joints.HANDS])}
+        deadline = time.monotonic() + START_TIMEOUT
         while self._state is None or any(name not in self.objects for name in objects):  # the first full state
-            self._receive()
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"the sim node sent no full state within {START_TIMEOUT:.0f} s")
+            self._receive(timeout=1.0)
         _, _, _, upper, hands = self._state
         self.upper, self.hands = upper.copy(), hands.copy()
 
-    dt = DT
+    dt = CONTROL_DT
 
     # Locomotion, UpperBody, Hands: remembered, sent on step()
     def move(self, vx, vy, vyaw):
@@ -59,8 +65,7 @@ class DoraG1(G1):
 
     def joint_positions(self, names):
         _, _, _, upper, hands = self._state
-        angle = dict(zip(joints.UPPER_BODY, upper)) | dict(zip(joints.HANDS, hands))
-        return np.array([angle[n] for n in names])
+        return np.concatenate([upper, hands])[[self._index[n] for n in names]]
 
     def pose(self):
         return self._pose
@@ -83,13 +88,16 @@ class DoraG1(G1):
         self.node.send_output("upper_body", pa.array(self.upper))
         self.node.send_output("hands", pa.array(self.hands))
         before = self._time
-        while self._time <= before and not self.stopped:
+        while self._time <= before:
             self._receive()
 
-    def _receive(self):
-        event = self.node.next()
+    def _receive(self, timeout=None):
+        """Handle the next event. With a timeout, returns when nothing came in time.
+        The graph stopping (STOP, or every sender gone) ends the program."""
+        event = self.node.next() if timeout is None else self.node.next(timeout=timeout)
+        if event is None and timeout is not None:
+            return
         if event is None or event["type"] == "STOP":
-            self.stopped = True
             raise SystemExit(0)
         if event["type"] != "INPUT":
             return

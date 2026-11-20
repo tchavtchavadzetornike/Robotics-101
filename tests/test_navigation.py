@@ -8,8 +8,9 @@ Plain Python + NumPy: they run on any computer, without Isaac Sim or dora.
 
 import numpy as np
 from g1 import messages
+from g1.config import SCAN_DT
 from g1.planner import ROBOT_RADIUS, Planner
-from g1.tracker import SCAN_DT, Tracker
+from g1.tracker import Tracker
 
 PERSON_RADIUS = 0.22  # m
 

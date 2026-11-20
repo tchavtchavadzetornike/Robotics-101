@@ -42,6 +42,7 @@ ROBOT_WEIGHT = 1.0
 ROBOT_SPACE = 0.40  # m: the radius people treat the robot as having
 
 GOAL_REACHED = 0.6  # m: close enough to the goal, pick the next one
+MAX_PLACING_TRIES = 1000  # random spots tried for one person before the square counts as full
 
 
 class Crowd:
@@ -72,7 +73,7 @@ class Crowd:
 
     def _free_spot(self, placed, keep_clear):
         """A random spot at least 1.5 m from everyone placed so far."""
-        while True:
+        for _ in range(MAX_PLACING_TRIES):
             spot = self.rng.uniform(-self.half_size, self.half_size, 2)
             if keep_clear is not None:
                 if np.hypot(*(spot - keep_clear[:2])) < keep_clear[2]:
@@ -81,6 +82,10 @@ class Crowd:
                 return spot
             if np.min(np.linalg.norm(self.position[:placed] - spot, axis=1)) > 1.5:
                 return spot
+        raise ValueError(
+            f"no free spot for person {placed + 1} of {self.count} on a {2 * self.half_size:g} m square: "
+            "too many people for the space"
+        )
 
     def _nearest_side(self, p):
         """Which side of the square a point is closest to: 0 E, 1 N, 2 W, 3 S."""
