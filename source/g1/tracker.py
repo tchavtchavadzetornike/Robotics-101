@@ -12,6 +12,8 @@ doesn't look like the people moving.
 
 import numpy as np
 
+from .config import PERSON_RADIUS, SCAN_DT
+
 # ---- clustering and detection ----
 CLUSTER_GAP = 0.25  # m: neighbours on the scan closer than this are one thing
 MAX_WIDTH = 0.8  # m: anything wider is not one person
@@ -19,11 +21,9 @@ MIN_POINTS = 2  # one point alone could be noise
 # The lidar only sees the near side of a body. For a round body of radius R the
 # middle of the visible arc lies 2R/pi = 0.64 R in front of the true center,
 # so we push the detection that far back. R = 0.22 m gives 0.14 m.
-PERSON_RADIUS = 0.22  # m
 CENTER_OFFSET = 2 * PERSON_RADIUS / np.pi
 
 # ---- tracking (an "alpha-beta filter": the simplest tracking filter) ----
-SCAN_DT = 0.1  # s between scans (10 Hz lidar)
 GATE = 0.6  # m: a detection farther than this from a track is someone else
 # How much to trust a new measurement against the prediction:
 ALPHA = 0.6  # for the position (1 = believe the lidar fully)

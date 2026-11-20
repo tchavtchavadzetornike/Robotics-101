@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from area.crowd import Crowd  # noqa: E402
 from fakes import PERSON_RADIUS, FakeG1  # noqa: E402
 from g1 import joints, messages  # noqa: E402
+from g1.config import SCAN_DT  # noqa: E402
 from g1.planner import ROBOT_RADIUS  # noqa: E402
-from g1.tracker import SCAN_DT  # noqa: E402
 
 task = os.environ["TASK"]
 crowd = None

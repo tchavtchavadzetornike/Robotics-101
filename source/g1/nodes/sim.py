@@ -40,25 +40,15 @@ from dora import Node  # noqa: E402
 
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
-import tasks  # noqa: E402, F401  registers the tasks' environments
+import tasks  # noqa: E402  registers the tasks' environments
 from g1 import joints, messages  # noqa: E402
+from g1.config import SCAN_DT  # noqa: E402
 from g1.isaac import IsaacG1  # noqa: E402
-from g1.tracker import SCAN_DT  # noqa: E402
 
 POLL = 1e-4  # s: how long to wait for a message before the next step
 
-task = os.environ["TASK"]
-seed = int(os.environ.get("SEED", "0"))
-objects = [name for name in os.environ.get("OBJECTS", "").split(",") if name]
-cfg = parse_env_cfg(task, device=args.device, num_envs=1)
-cfg.seed = seed
-env = gym.make(task, cfg=cfg).unwrapped
-env.reset()
-robot = IsaacG1(env, seed)
-node = Node()
 
-
-def take_messages():
+def take_messages(node, robot):
     """Apply every command that has arrived. Returns True when the graph stops."""
     while True:
         event = node.next(timeout=POLL)
@@ -76,7 +66,7 @@ def take_messages():
             robot.set_hand_targets("right", value[len(joints.LEFT_HAND) :])
 
 
-def publish():
+def publish(node, robot, objects):
     t = robot.time()
     node.send_output("base_pose", pa.array(messages.pack_pose(t, *robot.pose())))
     state = messages.pack_robot_state(
@@ -92,27 +82,42 @@ def publish():
         node.send_output("object_pose", pa.array(messages.pack_object_pose(t, position, heading)), {"name": name})
 
 
-stop = False
-next_scan = 0.0
-ended = None
-while app.is_running() and not stop and ended is None:
-    stop = take_messages()
-    publish()
-    if robot.time() >= next_scan - 1e-9:
-        next_scan += SCAN_DT
-        node.send_output("scan", pa.array(messages.pack_scan(robot.time(), robot.scan())))
-    robot.step()
-    _, _, terminated, truncated, _ = robot.last_step
-    if bool(terminated[0]) or bool(truncated[0]):
-        active = [
-            name for name in env.termination_manager.active_terms if bool(env.termination_manager.get_term(name)[0])
-        ]
-        ended = ", ".join(active) or "ended"
+def main():
+    task = os.environ["TASK"]
+    seed = int(os.environ.get("SEED", "0"))
+    objects = [name for name in os.environ.get("OBJECTS", "").split(",") if name]
+    cfg = parse_env_cfg(task, device=args.device, num_envs=1)
+    tasks.configure(task, cfg, seed)
+    env = gym.make(task, cfg=cfg).unwrapped
+    env.reset()
+    robot = IsaacG1(env, seed)
+    node = Node()
 
-if ended:
-    node.log_info(f"{task}: episode ended at t={robot.time():.1f}s ({ended})")
-while app.is_running() and not stop:  # keep the picture up until the graph is stopped
-    stop = take_messages()
-    env.sim.render()
-env.close()
-app.close()
+    stop = False
+    next_scan = 0.0
+    ended = None
+    while app.is_running() and not stop and ended is None:
+        stop = take_messages(node, robot)
+        publish(node, robot, objects)
+        if robot.time() >= next_scan - 1e-9:
+            next_scan += SCAN_DT
+            node.send_output("scan", pa.array(messages.pack_scan(robot.time(), robot.scan())))
+        robot.step()
+        _, _, terminated, truncated, _ = robot.last_step
+        if bool(terminated[0]) or bool(truncated[0]):
+            active = [
+                name for name in env.termination_manager.active_terms if bool(env.termination_manager.get_term(name)[0])
+            ]
+            ended = ", ".join(active) or "ended"
+
+    if ended:
+        node.log_info(f"{task}: episode ended at t={robot.time():.1f}s ({ended})")
+    while app.is_running() and not stop:  # keep the picture up until the graph is stopped
+        stop = take_messages(node, robot)
+        env.sim.render()
+    env.close()
+
+
+if __name__ == "__main__":
+    main()
+    app.close()

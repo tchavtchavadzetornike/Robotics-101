@@ -7,11 +7,14 @@ Inputs:  base_pose, robot_state, scan, object_pose (bottle)   from sim
 Outputs: cmd_vel, upper_body, hands                            to sim
 """
 
+import logging
+
 from dora import Node
 from g1.dora import DoraG1
 
 from tasks.pick_and_place.mission import PickAndPlace
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")  # the mission reports each step
 robot = DoraG1(Node(), objects=["bottle"])
 mission = PickAndPlace(robot)
 while not mission.done:

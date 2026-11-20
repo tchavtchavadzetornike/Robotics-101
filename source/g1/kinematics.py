@@ -13,6 +13,7 @@ BSD-3-Clause, in g1/assets/). Its root is the pelvis, so targets are in the
 pelvis frame.
 """
 
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -30,10 +31,16 @@ MAX_ITERATIONS = 200
 TOLERANCE = 0.005  # m: close enough (and the rotation error times ROTATION_WEIGHT)
 
 
+@cache
+def load_model():
+    """Unitree's G1 model, parsed once. Read-only: every user makes its own Data."""
+    return pin.buildModelFromUrdf(str(MODEL))
+
+
 class ArmIK:
     def __init__(self, side: str):
         self.side = side
-        self.model = pin.buildModelFromUrdf(str(MODEL))
+        self.model = load_model()
         self.data = self.model.createData()
         self.palm = self.model.getFrameId(PALM[side])
         self.arm_q = [self.model.joints[self.model.getJointId(n)].idx_q for n in joints.ARM[side]]
@@ -88,7 +95,7 @@ def grasp_point(side: str) -> np.ndarray:
     """Where a held object's center sits, in the palm frame: the middle of the
     gap between the thumb tip and the two fingers, with the hand open (from
     Unitree's model). The palm is placed so that this point is on the object."""
-    model = pin.buildModelFromUrdf(str(MODEL))
+    model = load_model()
     data = model.createData()
     pin.framesForwardKinematics(model, data, pin.neutral(model))
     point = {
@@ -108,7 +115,7 @@ def hand_pose(side: str, closed: bool) -> np.ndarray:
     torque limits set how hard they squeeze)."""
     if not closed:
         return np.zeros(7)
-    model = pin.buildModelFromUrdf(str(MODEL))
+    model = load_model()
     angles = []
     for name in joints.HAND[side]:
         i = model.joints[model.getJointId(name)].idx_q

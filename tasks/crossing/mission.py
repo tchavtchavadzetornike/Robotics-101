@@ -9,9 +9,9 @@ keep the pose they start with.
         mission.update(); robot.step()
 """
 
+from g1.config import SCAN_DT
 from g1.interfaces import Lidar, Locomotion, State
 from g1.navigator import Navigator
-from g1.tracker import SCAN_DT
 
 from .layout import GOAL
 

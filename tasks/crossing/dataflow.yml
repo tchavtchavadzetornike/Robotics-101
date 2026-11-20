@@ -48,5 +48,6 @@ nodes:
     inputs:
       cmd_vel_nav: planner/cmd_vel_nav
       tracks: tracker/tracks
+      scan: sim/scan # raw lidar points: obstacles the tracker doesn't call people
       base_pose: sim/base_pose
     outputs: [cmd_vel]

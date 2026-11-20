@@ -12,6 +12,7 @@ PASS = every episode succeeded.
 
 import argparse
 import importlib
+import logging
 import sys
 
 from isaaclab.app import AppLauncher
@@ -33,6 +34,7 @@ from g1.isaac import IsaacG1  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
 task = importlib.import_module(f"tasks.{args.task}")
+logging.basicConfig(level=logging.INFO, format="%(message)s")  # the mission reports each step
 
 
 def episode(env, robot):
@@ -54,9 +56,7 @@ def episode(env, robot):
 
 def main() -> bool:
     cfg = parse_env_cfg(task.ENV_ID, device=args.device, num_envs=1)
-    cfg.seed = args.seed
-    if hasattr(cfg.events, "move_crowd"):
-        cfg.events.move_crowd.params["seed"] = args.seed
+    task.configure(cfg, args.seed)
     env = gym.make(task.ENV_ID, cfg=cfg).unwrapped
     env.reset()
     robot = IsaacG1(env, args.seed)

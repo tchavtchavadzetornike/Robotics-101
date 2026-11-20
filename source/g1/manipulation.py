@@ -46,9 +46,10 @@ class Manipulator:
         """Move several hands at once: goals = {side: (palm position, rotation)}.
         Returns False (and does nothing) if any of them can't be reached."""
         goal = self.targets.copy()
+        waist = self.targets[: len(joints.WAIST)]  # the arms are solved with the waist where it is told to be
         for side, (position, rotation) in goals.items():
             arm = slice(*self._arm_slice(side))
-            angles, reached = self.ik[side].solve(position, rotation, start=self.targets[arm])
+            angles, reached = self.ik[side].solve(position, rotation, start=self.targets[arm], waist_angles=waist)
             if not reached:
                 return False
             goal[arm] = angles
